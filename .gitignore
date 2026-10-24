@@ -8,3 +8,4 @@ FwBinary.cpp
 *.pyc
 MacKernelSDK
 .ref/
+plan.md
