@@ -6512,8 +6512,8 @@ MtkMwx::enable(IONetworkInterface *interface)
 		return kIOReturnNotAttached;
 	}
 	struct ifnet *ifp = &com->sc_ic.ic_if;
-	if (ifp->if_flags & IFF_UP) {
-		MWX_DEV_LOG(com, "HAL enable skipped: already up flags=0x%x\n",
+	if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) == (IFF_UP | IFF_RUNNING)) {
+		MWX_DEV_LOG(com, "HAL enable skipped: already running flags=0x%x\n",
 		    ifp->if_flags);
 		return kIOReturnSuccess;
 	}

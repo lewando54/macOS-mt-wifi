@@ -9,3 +9,5 @@ FwBinary.cpp
 MacKernelSDK
 .ref/
 plan.md
+plan.local.md
+*.local.md

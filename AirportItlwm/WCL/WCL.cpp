@@ -240,8 +240,18 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
     if (!AirportWCL::decodeScan(request, 0x1550, scan))
         return kIOReturnBadArgument;
     ieee80211com *ic = fHalService->get80211Controller();
-    if (!(ic->ic_if.if_flags & IFF_RUNNING))
+    IOLog("MTKWifi: beginWCLScan type=%u chCount=%u ssidLen=%u state=%d if_flags=0x%x scanPending=%d\n",
+          scan.type, scan.channelCount, scan.ssidLength, ic->ic_state, ic->ic_if.if_flags, scanPending);
+    if (!(ic->ic_if.if_flags & IFF_RUNNING)) {
+        IOLog("MTKWifi: beginWCLScan: not running (flags=0x%x), enabling adapter\n",
+              ic->ic_if.if_flags);
+        fHalService->enable(instance->bsdInterface);
+    }
+    if (!(ic->ic_if.if_flags & IFF_RUNNING)) {
+        IOLog("MTKWifi: beginWCLScan: still not running (flags=0x%x), returning not ready\n",
+              ic->ic_if.if_flags);
         return kIOReturnNotReady;
+    }
     if (scanPending || joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN))
         return kIOReturnBusy;
     if (ic->ic_state == IEEE80211_S_AUTH || ic->ic_state == IEEE80211_S_ASSOC)
