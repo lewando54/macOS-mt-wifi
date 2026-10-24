@@ -44,6 +44,10 @@
 ({                                \
 ((typeof(_mask))(_val) << __bf_shf(_mask)) & (_mask);    \
 })
+#define FIELD_GET(_mask, _reg)                         \
+({                                                     \
+((typeof(_mask))((_reg) & (_mask))) >> __bf_shf(_mask); \
+})
 
 static inline int
 find_first_zero_bit(volatile void *p, int max)

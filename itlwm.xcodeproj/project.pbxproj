@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		MTK00001202610240000001 /* MtkMwx.cpp in Sources */ = {isa = PBXBuildFile; fileRef = MTK00002202610240000001 /* MtkMwx.cpp */; };
 		A112F5371BD949CD8CA19D88 /* WCL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A112F5371BD949CD8CA19D89 /* WCL.cpp */; };
 		024A07B023FCBC3C009FBA6C /* itlwm.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 024A07AF23FCBC3C009FBA6C /* itlwm.hpp */; };
 		024A07B223FCBC3C009FBA6C /* itlwm.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 024A07B123FCBC3C009FBA6C /* itlwm.cpp */; };
@@ -1062,6 +1063,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		MTK00002202610240000001 /* MtkMwx.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = MtkMwx.cpp; path = hal_mwx/MtkMwx.cpp; sourceTree = "<group>"; };
 		A112F5371BD949CD8CA19D89 /* WCL.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AirportItlwm/WCL/WCL.cpp; sourceTree = SOURCE_ROOT; };
 		024A07AC23FCBC3C009FBA6C /* itlwm.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = itlwm.kext; sourceTree = BUILT_PRODUCTS_DIR; };
 		024A07AF23FCBC3C009FBA6C /* itlwm.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = itlwm.hpp; sourceTree = "<group>"; };
@@ -3272,8 +3274,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A7D000012026100700000001 /* ItlDma.cpp in Sources */,
-				F8D94CA62B9ABFE20081A3C4 /* rs.cpp in Sources */,
 				F8D94CA72B9ABFE20081A3C4 /* _mbuf.cpp in Sources */,
 				F8D94CA82B9ABFE20081A3C4 /* ieee80211_ra.c in Sources */,
 				F8D94CA92B9ABFE20081A3C4 /* _task.cpp in Sources */,
@@ -3329,25 +3329,9 @@
 				F8D94CDA2B9ABFE20081A3C4 /* compat.cpp in Sources */,
 				F8D94CDB2B9ABFE20081A3C4 /* zutil.c in Sources */,
 				F8D94CDC2B9ABFE20081A3C4 /* ItlHalService.cpp in Sources */,
-				F8D94CDD2B9ABFE20081A3C4 /* ItlIwx.cpp in Sources */,
-				F8D94CDE2B9ABFE20081A3C4 /* utils.cpp in Sources */,
-				F8D94CDF2B9ABFE20081A3C4 /* fw.cpp in Sources */,
-				F8D94CE02B9ABFE20081A3C4 /* io.cpp in Sources */,
-				F8D94CE12B9ABFE20081A3C4 /* rx.cpp in Sources */,
-				F8D94CE22B9ABFE20081A3C4 /* coex.cpp in Sources */,
-				F8D94CE32B9ABFE20081A3C4 /* tx.cpp in Sources */,
-				F8D94CE42B9ABFE20081A3C4 /* hw.cpp in Sources */,
-				F8D94CE52B9ABFE20081A3C4 /* ItlIwn.cpp in Sources */,
-				F8D94CE62B9ABFE20081A3C4 /* phy.cpp in Sources */,
-				F8D94CE72B9ABFE20081A3C4 /* mac80211.cpp in Sources */,
-				F8D94CE82B9ABFE20081A3C4 /* nvm.cpp in Sources */,
-				F8D94CE92B9ABFE20081A3C4 /* ctxt.cpp in Sources */,
-				F8D94CEA2B9ABFE20081A3C4 /* led.cpp in Sources */,
-				F8D94CEB2B9ABFE20081A3C4 /* power.cpp in Sources */,
-				F8D94CEC2B9ABFE20081A3C4 /* scan.cpp in Sources */,
 				F8D94CED2B9ABFE20081A3C4 /* IOPCIEDeviceWrapper.cpp in Sources */,
-				F8D94CEE2B9ABFE20081A3C4 /* ItlIwm.cpp in Sources */,
-			);
+							MTK00001202610240000001 /* MtkMwx.cpp in Sources */,
+);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AFFBDFD057C2402C908ECB89 /* Sources */ = {
@@ -4195,7 +4179,6 @@
 				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					AIRPORT_WCL,
-					AIRPORT_VTD,
 					"$(inherited)",
 					AIRPORT,
 					"__IO80211_TARGET=__MAC_26_0",
@@ -4215,7 +4198,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
 				PRODUCT_MODULE_NAME = AirportItlwm;
 				PRODUCT_NAME = AirportItlwm;
-				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				SYSTEM_HEADER_SEARCH_PATHS = "hal_mwx itl80211/openbsd itl80211 include";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = Debug;
@@ -4263,7 +4246,6 @@
 				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					AIRPORT_WCL,
-					AIRPORT_VTD,
 					"__IO80211_TARGET=__MAC_26_0",
 					AIRPORT,
 					__PRIVATE_SPI__,
@@ -4283,7 +4265,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
 				PRODUCT_MODULE_NAME = AirportItlwm;
 				PRODUCT_NAME = AirportItlwm;
-				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				SYSTEM_HEADER_SEARCH_PATHS = "hal_mwx itl80211/openbsd itl80211 include";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = Release;

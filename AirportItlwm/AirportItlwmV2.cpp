@@ -270,6 +270,11 @@ bool AirportItlwm::start(IOService *provider)
         return false;
 #endif
     XYLog("%s\n", __PRETTY_FUNCTION__);
+    int mtk_off = 0;
+    if (PE_parse_boot_argn("-mtkoff", &mtk_off, sizeof(mtk_off))) {
+        IOLog("MTKWifi: -mtkoff boot-arg detected, driver start aborted\n");
+        return false;
+    }
     struct IOSkywalkEthernetInterface::RegistrationInfo registInfo;
     int boot_value = 0;
 

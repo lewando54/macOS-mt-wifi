@@ -29,6 +29,9 @@ struct FwDesc {
 #define IWL_FW(fw_name, fw_var, fw_size) \
     .name = fw_name, .var = fw_var, .size = fw_size
 
+#define MTK_FW_DESC(fw_name, fw_var, fw_size) \
+    .name = fw_name, .var = fw_var, .size = fw_size
+
 
 extern const struct FwDesc fwList[];
 extern const int fwNumber;

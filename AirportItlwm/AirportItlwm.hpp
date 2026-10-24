@@ -22,9 +22,7 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
 
-#include "ItlIwm.hpp"
-#include "ItlIwx.hpp"
-#include "ItlIwn.hpp"
+#include "MtkMwx.hpp"
 
 #include "AirportItlwmInterface.hpp"
 

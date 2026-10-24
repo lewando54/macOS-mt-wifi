@@ -1,3 +1,11 @@
+//
+//  compat.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/12.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -27,11 +35,9 @@
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOInterruptEventSource.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOMemoryDescriptor.h>
 #include <sys/kpi_mbuf.h>
 #include <IOKit/network/IOMbufMemoryCursor.h>
-#ifdef AIRPORT_VTD
-#include "ItlDma.hpp"
-#endif
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_mira.h>
 #include <net80211/ieee80211_amrr.h>
@@ -44,6 +50,7 @@
 #define BUS_DMA_ZERO		0
 #define BUS_DMA_COHERENT	0
 #define BUS_DMA_READ		0
+#define BUS_DMA_WRITE		0
 
 static inline void
 USEC_TO_TIMEVAL(uint64_t us, struct timeval *tv)
@@ -146,18 +153,13 @@ _fls(int mask)
 }
 
 enum {
-	BUS_DMASYNC_PREREAD,
-	BUS_DMASYNC_PREWRITE,
-	BUS_DMASYNC_POSTREAD,
-	BUS_DMASYNC_POSTWRITE
+	BUS_DMASYNC_PREREAD = 0x01,
+	BUS_DMASYNC_PREWRITE = 0x02,
+	BUS_DMASYNC_POSTREAD = 0x04,
+	BUS_DMASYNC_POSTWRITE = 0x08
 };
 
-#ifdef AIRPORT_VTD
-typedef ItlDmaArena *bus_dma_tag_t;
-#else
-typedef int bus_dma_tag_t;
-#endif
-typedef IOBufferMemoryDescriptor*	bus_dma_segment_t;
+typedef int				bus_dma_tag_t;
 typedef caddr_t				bus_space_handle_t; // pointer to device memory
 typedef int				pci_chipset_tag_t;
 typedef mach_vm_address_t		bus_addr_t;
@@ -166,13 +168,19 @@ typedef IOMemoryMap*			bus_space_tag_t;
 typedef IOPCIDevice*			pcitag_t;
 typedef uint32_t			pcireg_t;
 
+typedef struct bus_dma_segment {
+	IOBufferMemoryDescriptor *buf;
+	bus_addr_t ds_addr;
+	bus_size_t ds_len;
+} bus_dma_segment_t;
+
 class pci_intr_handle : public OSObject {
 	OSDeclareDefaultStructors(pci_intr_handle)
 public:
 	IOWorkLoop*		workloop;
 	IOInterruptEventSource*	intr;
 	IOPCIDevice*		dev;
-	void (*func)(void* arg);
+	int (*func)(void* arg);
 	void* arg;
 };
 typedef pci_intr_handle* pci_intr_handle_t;
@@ -202,26 +210,22 @@ struct pci_attach_args {
 	pci_chipset_tag_t	pa_pc;
 	pcitag_t		pa_tag;
 	bus_dma_tag_t		pa_dmat;
+	pcireg_t		pa_id;
 };
 
 struct bus_dmamap {
 	IOMbufNaturalMemoryCursor*	cursor;
+	IOMemoryDescriptor*		mem;
+	IOBufferMemoryDescriptor*	dm_bounce_mem;
+	mbuf_t				dm_mbuf;
+	bool				dm_bounce;
 	int				dm_nsegs;
-	IOPhysicalSegment		dm_segs[23]; // reserve space for 8 segments
-#ifdef AIRPORT_VTD
-    ItlDmaBuffer dma;
-    uint32_t maxSegmentSize;
-    uint32_t maxSegments;
-#endif
+	bus_size_t			dm_maxsize;
+	bus_size_t			dm_mapsize;
+	bus_size_t			dm_bounce_size;
+	bus_dma_segment_t		dm_segs[23];
 };
 typedef struct bus_dmamap* bus_dmamap_t;
-
-/* max bufs per tfd the driver will use */
-#define IWM_MAX_CMD_TBS_PER_TFD 2
-
-#define IWM_TX_RING_COUNT    256
-#define IWM_TX_RING_LOMARK    192
-#define IWM_TX_RING_HIMARK    224
 
 struct pci_matchid {
     int     pm_vid;
@@ -270,7 +274,7 @@ pci_match(int vid, int pid, int sub_vid, int sub_dev, const struct pci_matchid *
 }
 
 /*
- * DMA glue is from iwn
+ * DMA glue shared by the OpenBSD PCI driver ports.
  */
 
 char*		ether_sprintf(const u_char *ap);
@@ -284,7 +288,9 @@ int     pci_intr_map_msix(struct pci_attach_args *pa, int vec, pci_intr_handle_t
 int		pci_intr_map_msi(struct pci_attach_args *paa, pci_intr_handle_t *ih);
 int		pci_intr_map(struct pci_attach_args *paa, pci_intr_handle_t *ih);
 void*		pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg);
+void*		pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg, const char *name);
 void		pci_intr_disestablish(pci_chipset_tag_t pc, void *ih);
+const char	*pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih);
 
 uint64_t    bus_space_read_8(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset);
 void        bus_space_write_8(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint64_t value);
@@ -292,6 +298,7 @@ uint32_t	bus_space_read_4(bus_space_tag_t space, bus_space_handle_t handle, bus_
 void		bus_space_write_4(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint32_t value);
 void bus_space_write_1(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint8_t value);
 void		bus_space_barrier(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, bus_size_t length, int flags);
+void		bus_space_unmap(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t size);
 
 int		bus_dmamap_create(bus_dma_tag_t tag, bus_size_t size, int nsegments, bus_size_t maxsegsz, bus_size_t boundary, int flags, bus_dmamap_t *dmamp);
 int		bus_dmamem_alloc(bus_dma_tag_t tag, bus_size_t size, bus_size_t alignment, bus_size_t boundary, bus_dma_segment_t *segs, int nsegs, int *rsegs, int flags);
@@ -299,12 +306,12 @@ int		bus_dmamem_map(bus_dma_tag_t tag, bus_dma_segment_t *segs, int nsegs, size_
 bus_addr_t	bus_dmamap_get_paddr(bus_dma_segment_t seg); // XXX new
 void		bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t dmam, bus_addr_t offset, bus_size_t len, int ops);
 void		bus_dmamem_unmap(bus_dma_segment_t seg); // XXX changed args
+void		bus_dmamem_unmap(bus_dma_tag_t tag, void *kva, size_t size);
 void		bus_dmamem_free(bus_dma_tag_t tag, bus_dma_segment_t *segs, int nsegs);
 void		bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t dmam);
 int		bus_dmamap_load(bus_dmamap_t map, mbuf_t m);
-UInt32 bus_dmamap_packet(bus_dmamap_t map, mbuf_t m, IOPhysicalSegment *segments, UInt32 count, bool receive);
-bool bus_dmamap_read(bus_dmamap_t map, mbuf_t m, size_t size);
-bool bus_dmamap_write(bus_dmamap_t map, mbuf_t m);
-#define bus_dmamap_load_mbuf bus_dmamap_load
+int		bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *buf, bus_size_t buflen, void *p, int flags);
+int		bus_dmamap_load_mbuf(bus_dma_tag_t tag, bus_dmamap_t map, mbuf_t m, int flags);
+void		bus_dmamap_unload(bus_dma_tag_t tag, bus_dmamap_t map);
 
 #endif

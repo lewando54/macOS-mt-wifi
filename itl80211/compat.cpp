@@ -1,3 +1,11 @@
+//
+//  compat.cpp
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/15.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -19,6 +27,7 @@
 //
 
 #include "compat.h"
+#include <IOKit/IOLib.h>
 #include <sys/random.h>
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -112,11 +121,12 @@ void interruptTrampoline(OSObject *ih, IOInterruptEventSource *, int count) {
 	pci_intr_handle* _ih = OSDynamicCast(pci_intr_handle, ih);
 	if (_ih == 0)
 		return;
-	_ih->func(_ih->arg); // jump to actual interrupt handler
+	(void)_ih->func(_ih->arg); // jump to actual interrupt handler
 }
 
 void* pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg) {
 	ih->arg = arg;
+	ih->func = handler;
 	ih->intr = IOInterruptEventSource::interruptEventSource(ih, &interruptTrampoline, ih->dev);
 	
 	if (ih->intr == 0)
@@ -128,85 +138,74 @@ void* pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, 
 	return ih;
 }
 
+void* pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg, const char *name) {
+	return pci_intr_establish(pc, ih, level, handler, arg);
+}
+
 void pci_intr_disestablish(pci_chipset_tag_t pc, void *ih) {
 	pci_intr_handle_t intr = (pci_intr_handle_t) ih;
 	
-	intr->workloop->removeEventSource(intr->intr);
-	
-	intr->intr->release();
+	if (intr->workloop && intr->intr)
+		intr->workloop->removeEventSource(intr->intr);
+	if (intr->intr)
+		intr->intr->release();
 	intr->intr = 0;
 	
-	intr->dev->release();
 	intr->dev = 0;
 	
-	intr->workloop->release();
 	intr->workloop = 0;
 	
 	intr->arg = 0;
+	intr->func = 0;
 	intr->release();
 	intr = 0;
 	ih = 0;
 }
 
+const char *pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih) {
+	return "msi";
+}
+
 uint64_t bus_space_read_8(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset) {
-    return *((volatile uint64_t*)(handle + offset));
+    return *((uint64_t*)(handle + offset));
 }
 
 void bus_space_write_8(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint64_t value) {
-#ifdef AIRPORT_VTD
-    OSSynchronizeIO();
-#endif
-    *((volatile uint64_t*)(handle + offset)) = value;
+    *((uint64_t*)(handle + offset)) = value;
 }
 
 uint32_t bus_space_read_4(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset) {
-	return *((volatile uint32_t*)(handle + offset));
+	return *((uint32_t*)(handle + offset));
 }
 
 void bus_space_write_1(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint8_t value) {
-#ifdef AIRPORT_VTD
-    OSSynchronizeIO();
-#endif
-    *((volatile uint8_t*)(handle + offset)) = value;
+    *((uint8_t*)(handle + offset)) = value;
 }
 
 void bus_space_write_4(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, uint32_t value) {
-#ifdef AIRPORT_VTD
-    OSSynchronizeIO();
-#endif
-	*((volatile uint32_t*)(handle + offset)) = value;
+	*((uint32_t*)(handle + offset)) = value;
 }
 
 void bus_space_barrier(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset, bus_size_t length, int flags) {
 	return; // In OSX device memory access is always uncached and serialized (afaik!)
 }
 
+void bus_space_unmap(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t size) {
+	if (space)
+		space->release();
+}
+
 int bus_dmamap_create(bus_dma_tag_t tag, bus_size_t size, int nsegments, bus_size_t maxsegsz, bus_size_t boundary, int flags, bus_dmamap_t *dmamp) {
 	if (dmamp == 0)
 		return 1;
-	*dmamp = new bus_dmamap();
-    if (!*dmamp)
-        return ENOMEM;
-#ifdef AIRPORT_VTD
-    auto map = *dmamp;
-    if (!tag || !size || !maxsegsz || nsegments <= 0 || nsegments > 23 || boundary ||
-        !tag->allocate(MAX(size, 4096U), 4096, map->dma)) {
-        delete map;
-        *dmamp = nullptr;
-        return ENOMEM;
-    }
-    map->maxSegmentSize = maxsegsz;
-    map->maxSegments = nsegments;
-    return 0;
-#else
+	*dmamp = new bus_dmamap;
+	memset(*dmamp, 0, sizeof(**dmamp));
+	(*dmamp)->dm_maxsize = size;
 	(*dmamp)->cursor = IOMbufNaturalMemoryCursor::withSpecification(maxsegsz, nsegments);
-	if ((*dmamp)->cursor == 0) {
-        delete *dmamp;
-        *dmamp = nullptr;
+	if ((*dmamp)->cursor == 0)
 		return 1;
-    } else
+	else
 		return 0;
-#endif
 }
 
 IOBufferMemoryDescriptor* alloc_dma_memory(size_t size, mach_vm_address_t alignment,/* void** vaddr, mach_vm_address_t* paddr, */IOOptionBits opts);
@@ -265,121 +264,234 @@ int bus_dmamem_alloc(bus_dma_tag_t tag, bus_size_t size, bus_size_t alignment, b
 	// Ignore flags and don't pass in the number of segments, it's not used in the driver (always 1 anyway)
 	if (segs == 0)
 		return 1;
-	*segs = alloc_dma_memory(size, alignment);
-	if (*segs == 0)
+	memset(segs, 0, sizeof(*segs));
+	segs->buf = alloc_dma_memory(size, alignment);
+	if (segs->buf == 0)
 		return 1;
-	else
-		return 0;
+	segs->ds_addr = segs->buf->getPhysicalAddress();
+	segs->ds_len = size;
+	if (rsegs)
+		*rsegs = 1;
+	return 0;
 }
 
 int bus_dmamem_map(bus_dma_tag_t tag, bus_dma_segment_t *segs, int nsegs, size_t size, void **kvap, int flags) {
 	// ignore flags, the memory is already mapped as one segment by the call to bus_dmamem_alloc so just return the virtual address
-	if (*segs == 0 || kvap == 0)
+	if (segs == 0 || segs->buf == 0 || kvap == 0)
 		return 1;
-	*kvap = (*segs)->getBytesNoCopy();
+	*kvap = segs->buf->getBytesNoCopy();
 	return 0;
 }
 
 bus_addr_t bus_dmamap_get_paddr(bus_dma_segment_t seg) {
-	if (seg == 0)
+	if (seg.buf == 0)
 		return 0;
 	else
-		return seg->getPhysicalAddress();
+		return seg.ds_addr;
 }
 
 void bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t dmam, bus_addr_t offset, bus_size_t len, int ops) {
-#ifdef AIRPORT_VTD
-    OSSynchronizeIO();
-#else
-	return; // no syncing, we mapped the memory with cache inhibition so pray it works
-#endif
+	if ((ops & (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_POSTREAD)) == 0)
+		return;
+	if (dmam == 0 || !dmam->dm_bounce || dmam->dm_bounce_mem == 0 ||
+	    dmam->dm_mbuf == 0)
+		return;
+
+	void *bounce = dmam->dm_bounce_mem->getBytesNoCopy();
+	if (bounce == 0)
+		return;
+
+	size_t copy_len = len;
+	if (offset > dmam->dm_mapsize)
+		return;
+	if (copy_len > dmam->dm_mapsize - offset)
+		copy_len = dmam->dm_mapsize - offset;
+	if (copy_len == 0)
+		return;
+
+	if (ops & BUS_DMASYNC_PREWRITE) {
+		mbuf_copydata(dmam->dm_mbuf, offset, copy_len,
+		    (uint8_t *)bounce + offset);
+	}
+	if (ops & BUS_DMASYNC_POSTREAD) {
+		mbuf_copyback(dmam->dm_mbuf, offset, copy_len,
+		    (uint8_t *)bounce + offset, MBUF_DONTWAIT);
+		mbuf_inbound_modified(dmam->dm_mbuf);
+	}
 }
 
 void bus_dmamem_unmap(bus_dma_segment_t seg) {
-	if (seg == 0)
+	if (seg.buf == 0)
 		return;
-	seg->complete();
+	seg.buf->complete();
+}
+
+void bus_dmamem_unmap(bus_dma_tag_t tag, void *kva, size_t size) {
+	return;
 }
 
 void bus_dmamem_free(bus_dma_tag_t tag, bus_dma_segment_t *segs, int nsegs) {
 	if (segs == 0)
 		return;
-	if (*segs == 0)
+	if (segs->buf == 0)
 		return;
-	(*segs)->release();
-	*segs = 0;
+	segs->buf->release();
+	memset(segs, 0, sizeof(*segs));
 }
 
 void bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t dmam) {
 	if (dmam == 0)
 		return;
-#ifdef AIRPORT_VTD
-    if (dmam->dma.arena)
-        dmam->dma.arena->deallocate(dmam->dma);
-#endif
-    if (dmam->cursor)
-        dmam->cursor->release();
-    dmam->cursor = nullptr;
-    delete dmam;
+	if (dmam->mem) {
+		dmam->mem->complete();
+		dmam->mem->release();
+	}
+	dmam->mem = 0;
+	if (dmam->dm_bounce_mem) {
+		dmam->dm_bounce_mem->complete();
+		dmam->dm_bounce_mem->release();
+	}
+	dmam->dm_bounce_mem = 0;
+	if (dmam->cursor)
+		dmam->cursor->release();
+	dmam->cursor = 0;
+	delete dmam;
 }
 
 int bus_dmamap_load(bus_dmamap_t map, mbuf_t mb) {
 	if (map == 0 || mb == 0)
 		return 1;
-	map->dm_nsegs = bus_dmamap_packet(map, mb, map->dm_segs, 1, false);
+	IOPhysicalSegment segs[23];
+	if (map->mem) {
+		map->mem->complete();
+		map->mem->release();
+		map->mem = 0;
+	}
+	map->dm_mbuf = mb;
+	map->dm_bounce = false;
+	map->dm_nsegs = map->cursor->getPhysicalSegmentsWithCoalesce(mb, segs, 23);
 	if (map->dm_nsegs == 0)
 		return 1;
-	else
+	size_t pktlen = mbuf_pkthdr_len(mb);
+	if (pktlen > UINT32_MAX)
+		return 1;
+	map->dm_mapsize = (bus_size_t)pktlen;
+	bool needs_bounce = false;
+	for (int i = 0; i < map->dm_nsegs; i++) {
+		if (segs[i].location > UINT32_MAX || segs[i].length > UINT32_MAX) {
+			needs_bounce = true;
+			break;
+		}
+	}
+	if (needs_bounce) {
+		static uint32_t bounce_log_count;
+		bus_size_t bounce_size = map->dm_maxsize;
+		if (bounce_size == 0 || bounce_size < pktlen)
+			bounce_size = (bus_size_t)pktlen;
+		if (map->dm_bounce_mem == 0 ||
+		    map->dm_bounce_size < bounce_size) {
+			if (map->dm_bounce_mem != 0) {
+				map->dm_bounce_mem->complete();
+				map->dm_bounce_mem->release();
+				map->dm_bounce_mem = 0;
+				map->dm_bounce_size = 0;
+			}
+			IOBufferMemoryDescriptor *mem =
+			    alloc_dma_memory(bounce_size, PAGE_SIZE);
+			if (mem == 0)
+				return 1;
+			map->dm_bounce_mem = mem;
+			map->dm_bounce_size = bounce_size;
+		}
+		bus_addr_t addr = map->dm_bounce_mem->getPhysicalAddress();
+		if (addr > UINT32_MAX) {
+			return 1;
+		}
+		map->dm_bounce = true;
+		map->dm_nsegs = 1;
+		map->dm_segs[0].buf = NULL;
+		map->dm_segs[0].ds_addr = addr;
+		map->dm_segs[0].ds_len = (bus_size_t)pktlen;
+		if (bounce_log_count < 16) {
+			IOLog("SimpleMtkWlan-dma: bounce mbuf map len=%zu bounce_size=%u dma=0x%llx\n",
+			    pktlen, map->dm_bounce_size, (unsigned long long)addr);
+			bounce_log_count++;
+		}
 		return 0;
+	}
+	for (int i = 0; i < map->dm_nsegs; i++) {
+		map->dm_segs[i].buf = NULL;
+		map->dm_segs[i].ds_addr = segs[i].location;
+		map->dm_segs[i].ds_len = (bus_size_t)segs[i].length;
+	}
+	return 0;
 }
 
-UInt32 bus_dmamap_packet(bus_dmamap_t map, mbuf_t m, IOPhysicalSegment *segments, UInt32 count, bool receive)
-{
-    if (!map || !m || !segments || !count)
-        return 0;
-#ifdef AIRPORT_VTD
-    const size_t size = mbuf_pkthdr_len(m);
-    if (!size || size > map->dma.size || !map->dma.arena)
-        return 0;
-    count = MIN(count, map->maxSegments);
-    const uint32_t segmentSize = (receive || count == 1) ? map->dma.size : MIN(map->maxSegmentSize, 4092U);
-    const uint32_t needed = uint32_t((size + segmentSize - 1) / segmentSize);
-    if (needed > count || (receive && (mbuf_next(m) || mbuf_len(m) < size)))
-        return 0;
-    if (!receive && !bus_dmamap_write(map, m))
-        return 0;
-    size_t remaining = size;
-    for (uint32_t i = 0, offset = 0; i < needed; i++) {
-        segments[i].location = map->dma.address + offset;
-        segments[i].length = MIN(remaining, size_t(segmentSize));
-        offset += uint32_t(segments[i].length);
-        remaining -= segments[i].length;
-    }
-    return needed;
-#else
-    return receive ? map->cursor->getPhysicalSegments(m, segments, count) :
-        map->cursor->getPhysicalSegmentsWithCoalesce(m, segments, count);
-#endif
+int bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *buf, bus_size_t buflen, void *p, int flags) {
+	if (map == 0 || buf == 0)
+		return 1;
+	if (map->mem) {
+		map->mem->complete();
+		map->mem->release();
+		map->mem = 0;
+	}
+	IOMemoryDescriptor *mem = IOMemoryDescriptor::withAddress(buf, buflen,
+	    kIODirectionOutIn);
+	if (mem == 0)
+		return 1;
+	if (mem->prepare(kIODirectionOutIn) != kIOReturnSuccess) {
+		mem->release();
+		return 1;
+	}
+
+	IOByteCount offset = 0;
+	bus_size_t remaining = buflen;
+	int nsegs = 0;
+
+	while (remaining > 0 && nsegs < 23) {
+		IOByteCount seglen = 0;
+		addr64_t addr = mem->getPhysicalSegment(offset, &seglen);
+
+		if (addr == 0 || seglen == 0)
+			break;
+		if (seglen > remaining)
+			seglen = remaining;
+		map->dm_segs[nsegs].buf = NULL;
+		map->dm_segs[nsegs].ds_addr = (bus_addr_t)addr;
+		map->dm_segs[nsegs].ds_len = (bus_size_t)seglen;
+		offset += seglen;
+		remaining -= seglen;
+		nsegs++;
+	}
+	if (remaining != 0) {
+		mem->complete();
+		mem->release();
+		map->dm_nsegs = 0;
+		map->dm_mapsize = 0;
+		return 1;
+	}
+	map->mem = mem;
+	map->dm_mbuf = 0;
+	map->dm_bounce = false;
+	map->dm_nsegs = nsegs;
+	map->dm_mapsize = buflen;
+	return 0;
 }
 
-bool bus_dmamap_read(bus_dmamap_t map, mbuf_t m, size_t size)
-{
-#ifdef AIRPORT_VTD
-    if (!map || !map->dma.arena || !m || size > map->dma.size || mbuf_next(m) || mbuf_len(m) < size)
-        return false;
-    OSSynchronizeIO();
-    memcpy(mbuf_data(m), map->dma.vaddr, size);
-#endif
-    return true;
+int bus_dmamap_load_mbuf(bus_dma_tag_t tag, bus_dmamap_t map, mbuf_t m, int flags) {
+	return bus_dmamap_load(map, m);
 }
 
-bool bus_dmamap_write(bus_dmamap_t map, mbuf_t m)
-{
-#ifdef AIRPORT_VTD
-    if (!map || !map->dma.arena || !m || mbuf_pkthdr_len(m) > map->dma.size)
-        return false;
-    return mbuf_copydata(m, 0, mbuf_pkthdr_len(m), map->dma.vaddr) == 0;
-#else
-    return true;
-#endif
+void bus_dmamap_unload(bus_dma_tag_t tag, bus_dmamap_t map) {
+	if (map == 0)
+		return;
+	if (map->mem) {
+		map->mem->complete();
+		map->mem->release();
+		map->mem = 0;
+	}
+	map->dm_mbuf = 0;
+	map->dm_bounce = false;
+	map->dm_nsegs = 0;
+	map->dm_mapsize = 0;
 }

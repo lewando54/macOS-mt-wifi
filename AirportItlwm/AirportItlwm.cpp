@@ -70,17 +70,9 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
     IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
     if (!device)
         return NULL;
-    if (ItlIwx::iwx_match(device)) {
+    if (MtkMwx::mwx_match(device)) {
         isMatch = true;
-        fHalService = new ItlIwx;
-    }
-    if (!isMatch && ItlIwm::iwm_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwm;
-    }
-    if (!isMatch && ItlIwn::iwn_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwn;
+        fHalService = new MtkMwx;
     }
     if (isMatch) {
         device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap);

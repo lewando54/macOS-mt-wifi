@@ -9,9 +9,7 @@
 #include "IOPCIEDeviceWrapper.hpp"
 #include "Apple80211.h"
 
-#include "ItlIwm.hpp"
-#include "ItlIwx.hpp"
-#include "ItlIwn.hpp"
+#include "MtkMwx.hpp"
 
 #define super IOService
 OSDefineMetaClassAndStructors(IOPCIEDeviceWrapper, IOService);
@@ -61,6 +59,11 @@ IOService* IOPCIEDeviceWrapper::
 probe(IOService *provider, SInt32 *score)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
+    int mtk_off = 0;
+    if (PE_parse_boot_argn("-mtkoff", &mtk_off, sizeof(mtk_off))) {
+        IOLog("MTKWifi: -mtkoff boot-arg detected, driver disabled\n");
+        return NULL;
+    }
     bool isMatch = false;
     super::probe(provider, score);
     UInt8 msiCap;
@@ -68,17 +71,9 @@ probe(IOService *provider, SInt32 *score)
     IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
     if (!device)
         return NULL;
-    if (ItlIwx::iwx_match(device)) {
+    if (MtkMwx::mwx_match(device)) {
         isMatch = true;
-        fHalService = new ItlIwx;
-    }
-    if (!isMatch && ItlIwm::iwm_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwm;
-    }
-    if (!isMatch && ItlIwn::iwn_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwn;
+        fHalService = new MtkMwx;
     }
     if (isMatch) {
         XYLog("%s Found\n", __FUNCTION__);

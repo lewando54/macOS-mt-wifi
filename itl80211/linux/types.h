@@ -113,7 +113,7 @@
 #define XYLog(fmt, x...)\
 do\
 {\
-kprintf("%s: " fmt, "itlwm", ##x);\
+IOLog("MTKWifi: " fmt, ##x);\
 }while(0)
 
 typedef UInt8  u8;
