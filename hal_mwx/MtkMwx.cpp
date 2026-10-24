@@ -57,9 +57,17 @@ OSDefineMetaClassAndStructors(MtkMwx, MtkHalService)
 #define PCI_PRODUCT_MEDIATEK_MT7921K   0x0608
 #define PCI_PRODUCT_MEDIATEK_MT7922    0x7922
 
-#define MWX_LOG(x...) printf("MTKWifi: " x)
+#include <IOKit/IOLib.h>
+#ifdef AIRPORT_WCL
+#include "../AirportItlwm/WCL/WCL.hpp"
+#endif
+
+#define MWX_LOG(fmt, args...) IOLog("MTKWifi: " fmt, ##args)
 #define MWX_DEV_LOG(sc, fmt, args...) \
-	printf("MTKWifi: %s: " fmt, DEVNAME(sc), ##args)
+	IOLog("MTKWifi: %s: " fmt, DEVNAME(sc), ##args)
+#define MWX_PRINTF(fmt, args...) IOLog("MTKWifi: " fmt, ##args)
+#undef printf
+#define printf MWX_PRINTF
 
 #define ifnet _ifnet
 #define mbuf __mbuf
@@ -1273,8 +1281,9 @@ mwx_newstate_task(void *ptr)
 	case IEEE80211_S_SCAN:
 		rv = mwx_scan(sc);
 		if (rv)
-			break;
-		break;
+			mwx_reset(sc);
+		splx(s);
+		return;
 	case IEEE80211_S_AUTH:
 		rv = mt7921_set_channel(sc);
 		if (rv)
@@ -4274,6 +4283,12 @@ mt7921_mcu_hw_scan(struct mwx_softc *sc, int bgscan)
 	int n_ssids = 0;
 	int rv;
 	uint8_t nchan, n_2g = 0, n_5g = 0;
+	bool scanActive = !bgscan;
+
+#ifdef AIRPORT_WCL
+	scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
+	    ic->ic_wcl_scan_active);
+#endif
 
 	m = mwx_mcu_alloc_msg(sizeof(*req));
 	if (m == NULL)
@@ -4285,24 +4300,28 @@ mt7921_mcu_hw_scan(struct mwx_softc *sc, int bgscan)
 
 	req->seq_num = sc->sc_scan_seq_num /* | sc->sc_band_idx << 7 */;
 	req->bss_idx = /* mvif->idx */ 0;
-	req->scan_type = /* sreq->n_ssids ? 1 : */ 0;
-	req->probe_req_num = /* sreq->n_ssids ? 2 : */ 0;
+	req->scan_type = scanActive ? 1 : 0;
+	req->probe_req_num = scanActive ? 2 : 0;
 	req->version = 1;
 
-#ifdef NOTYET
-	for (i = 0; i < sreq->n_ssids; i++) {
-		if (!sreq->ssids[i].ssid_len)
-			continue;
-		req->ssids[i].ssid_len = htole32(sreq->ssids[i].ssid_len);
-		memcpy(req->ssids[i].ssid, sreq->ssids[i].ssid,
-		    sreq->ssids[i].ssid_len);
-		n_ssids++;
-	}
+#ifdef AIRPORT_WCL
+	if (ic->ic_wcl_scan_requested && ic->ic_wcl_scan_ssid_length > 0 &&
+	    ic->ic_wcl_scan_ssid_length <= sizeof(req->ssids[0].ssid)) {
+		req->ssids[0].ssid_len = htole32(ic->ic_wcl_scan_ssid_length);
+		memcpy(req->ssids[0].ssid, ic->ic_wcl_scan_ssid,
+		    ic->ic_wcl_scan_ssid_length);
+		n_ssids = 1;
+		req->ssid_type = 0x4; // specific SSID + wildcard
+		req->ssid_type_ext = 0;
+		req->ssids_num = 1;
+	} else
 #endif
-
-	req->ssid_type = n_ssids ? 0x4 : 0x1;
-	req->ssid_type_ext = n_ssids ? 1 : 0;
-	req->ssids_num = n_ssids;
+	{
+		n_ssids = 0;
+		req->ssid_type = 0x1; // wildcard SSID
+		req->ssid_type_ext = 0;
+		req->ssids_num = 0;
+	}
 
 	for (nchan = 0, c = &ic->ic_channels[1];
 	    c <= &ic->ic_channels[IEEE80211_CHAN_MAX] &&
@@ -4312,6 +4331,13 @@ mt7921_mcu_hw_scan(struct mwx_softc *sc, int bgscan)
 
 		if (c->ic_flags == 0)
 			continue;
+
+#ifdef AIRPORT_WCL
+		if (ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted &&
+		    !AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels, true,
+		        ieee80211_chan2ieee(ic, c)))
+			continue;
+#endif
 
 		if (nchan < 32)
 			chan = &req->channels[nchan];
@@ -4338,38 +4364,26 @@ mt7921_mcu_hw_scan(struct mwx_softc *sc, int bgscan)
 		req->ext_channels_num = nchan - 32;
 	}
 
+	uint16_t dwell = scanActive ? 60 : 120;
+	uint16_t min_dwell = scanActive ? 40 : 100;
 	req->channel_type = nchan ? 4 : 0;
-	req->timeout_value = htole16(nchan * 120);
-	req->channel_min_dwell_time = htole16(120);
-	req->channel_dwell_time = htole16(120);
-
-
-#ifdef NOTYET
-	if (sreq->ie_len > 0) {
-		memcpy(req->ies, sreq->ie, sreq->ie_len);
-		req->ies_len = htole16(sreq->ie_len);
-	}
-#endif
+	req->timeout_value = htole16(nchan * dwell);
+	req->channel_min_dwell_time = htole16(min_dwell);
+	req->channel_dwell_time = htole16(dwell);
 
 	req->scan_func |= SCAN_FUNC_SPLIT_SCAN;
 
 	/* wildcard BSSID */
 	memset(req->bssid, 0xff, ETHER_ADDR_LEN);
-#ifdef NOTYET
-	if (sreq->flags & NL80211_SCAN_FLAG_RANDOM_ADDR) {
-		get_random_mask_addr(req->random_mac, sreq->mac_addr,
-		    sreq->mac_addr_mask);
-		req->scan_func |= SCAN_FUNC_RANDOM_MAC;
-	}
-#endif
 
 	MWX_DEV_LOG(sc,
-	    "scan request seq=%u channels=%u 2g=%u 5g=%u primary=%u ext=%u timeout=%u dwell=%u min_dwell=%u scan_func=0x%08x ssid_type=0x%x\n",
+	    "scan request seq=%u channels=%u 2g=%u 5g=%u primary=%u ext=%u timeout=%u dwell=%u min_dwell=%u scan_func=0x%08x ssid_type=0x%x scan_type=%u probe_req_num=%u\n",
 	    sc->sc_scan_seq_num, nchan, n_2g, n_5g, req->channels_num,
 	    req->ext_channels_num, le16toh(req->timeout_value),
 	    le16toh(req->channel_dwell_time),
 	    le16toh(req->channel_min_dwell_time),
-	    le32toh(req->scan_func), req->ssid_type);
+	    le32toh(req->scan_func), req->ssid_type,
+	    req->scan_type, req->probe_req_num);
 
 	rv = mwx_mcu_send_mbuf(sc, MCU_CE_CMD_START_HW_SCAN, m, NULL);
 	if (rv != 0)
@@ -4404,6 +4418,8 @@ mwx_end_scan_task(void *arg)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s;
 
+	MWX_DEV_LOG(sc, "end scan task calling ieee80211_end_scan (nodes=%d)\n",
+	    mwx_count_nodes(ic));
 	s = splnet();
 	ieee80211_end_scan(&ic->ic_if);
 	splx(s);
@@ -4442,8 +4458,8 @@ mt7921_mcu_scan_event(struct mwx_softc *sc, struct mbuf *m)
 		    sc->sc_rx_pkt_normal, sc->sc_rx_fill_fail);
 	}
 
-	if (mt7921_mcu_hw_scan_cancel(sc) != 0)
-		return;
+	mt7921_mcu_hw_scan_cancel(sc);
+	sc->sc_flags &= ~(MWX_FLAG_SCANNING | MWX_FLAG_BGSCAN);
 	task_add(systq, &sc->sc_scan_task);
 }
 

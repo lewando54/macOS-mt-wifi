@@ -170,7 +170,11 @@ IOReturn AirportItlwmSkywalkInterface::wclCommand(OSObject *, void *a0, void *a1
     auto self = static_cast<AirportItlwmSkywalkInterface *>(a0);
     if (self->wclStopping)
         return kIOReturnNotReady;
-    switch (uintptr_t(a1)) {
+    uintptr_t cmd = uintptr_t(a1);
+    if (cmd <= 4) {
+        IOLog("MTKWifi: WCL command %lu\n", (unsigned long)cmd);
+    }
+    switch (cmd) {
         case 13: return self->copyWCLChannels(a2);
         case 14: return self->copyWCLTrafficCounters(a2);
         case 15:
@@ -240,6 +244,8 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
     if (!AirportWCL::decodeScan(request, 0x1550, scan))
         return kIOReturnBadArgument;
     ieee80211com *ic = fHalService->get80211Controller();
+    IOLog("MTKWifi: beginWCLScan type=%u chCount=%u ssidLen=%u state=%d if_flags=0x%x scanPending=%d\n",
+          scan.type, scan.channelCount, scan.ssidLength, ic->ic_state, ic->ic_if.if_flags, scanPending);
     if (!(ic->ic_if.if_flags & IFF_RUNNING))
         return kIOReturnNotReady;
     if (scanPending || joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN))
@@ -275,7 +281,7 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
             scanSource->cancelTimeout();
             return kIOReturnBusy;
         }
-    } else if (ic->ic_state != IEEE80211_S_SCAN) {
+    } else {
         int error = ic->ic_newstate(ic, IEEE80211_S_SCAN, -1);
         if (error) {
             scanPending = false;
@@ -294,7 +300,11 @@ void AirportItlwmSkywalkInterface::finishWCLScan(IOReturn status)
     scanPending = false;
     scanCompleted = false;
     scanSource->cancelTimeout();
-    fHalService->get80211Controller()->ic_wcl_scan_requested = false;
+    auto ic = fHalService->get80211Controller();
+    ic->ic_wcl_scan_requested = false;
+    if (ic->ic_state != IEEE80211_S_RUN)
+        ic->ic_state = IEEE80211_S_INIT;
+    IOLog("MTKWifi: finishWCLScan status=0x%x\n", status);
     instance->postMessage(this, AirportWCL::ScanDone, &status, sizeof(status), true);
 }
 
@@ -333,6 +343,15 @@ void AirportItlwmSkywalkInterface::publishWCLBeacon(const ieee80211_node *node, 
     metadata->ieLength = uint32_t(AirportWCL::selectWPA2TransitionMode(
         reinterpret_cast<uint8_t *>(metadata + 1), length));
     size_t messageSize = sizeof(*metadata) + metadata->ieLength;
+    static uint32_t wcl_bcn_log = 0;
+    if (wcl_bcn_log < 30) {
+        wcl_bcn_log++;
+        IOLog("MTKWifi: publishWCLBeacon '%.*s' (%02x:%02x:%02x:%02x:%02x:%02x) ch=%u rssi=%d ies=%zu\n",
+              (int)node->ni_esslen, node->ni_essid,
+              node->ni_bssid[0], node->ni_bssid[1], node->ni_bssid[2],
+              node->ni_bssid[3], node->ni_bssid[4], node->ni_bssid[5],
+              channel, metadata->rssi, length);
+    }
     if (assocNotified && IEEE80211_ADDR_EQ(node->ni_bssid, joinBSSID)) {
         wclBssValid = messageSize <= sizeof(wclBssInfo);
         if (wclBssValid) {
@@ -762,6 +781,8 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
             break;
         }
         case IEEE80211_EVT_SCAN_DONE:
+            IOLog("MTKWifi: WCL IEEE80211_EVT_SCAN_DONE (scanPending=%d skip=%d)\n",
+                  scanPending, scanSkipCompletion);
             if (scanPending) {
                 if (scanSkipCompletion)
                     scanSkipCompletion = false;

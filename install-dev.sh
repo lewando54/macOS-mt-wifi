@@ -42,15 +42,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-KEXT_PATH="$REPO_DIR/build/products/$CONFIG/Tahoe/AirportItlwm.kext"
+BUILD_DIR="$REPO_DIR/build_artifacts"
+KEXT_PATH="$BUILD_DIR/products/$CONFIG/Tahoe/AirportItlwm.kext"
 
 if [ $DO_BUILD -eq 1 ]; then
     echo "==> Building AirportItlwm ($CONFIG configuration for Tahoe)..."
     python3 scripts/gen_mtk_fw.py firmware include/FwBinary.cpp
     xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Tahoe \
         -configuration "$CONFIG" -jobs 8 ARCHS=x86_64 \
-        -derivedDataPath "$REPO_DIR/build/dd" \
-        SYMROOT="$REPO_DIR/build/products" OBJROOT="$REPO_DIR/build/obj" \
+        -derivedDataPath "$BUILD_DIR/dd" \
+        SYMROOT="$BUILD_DIR/products" OBJROOT="$BUILD_DIR/obj" \
         CODE_SIGNING_ALLOWED=NO build
 fi
 
