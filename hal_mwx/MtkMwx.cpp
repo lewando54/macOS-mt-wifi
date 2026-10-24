@@ -446,6 +446,7 @@ struct mwx_softc {
 		struct mbuf	*mcu_m;
 		uint32_t	 mcu_cmd;
 		uint32_t	 mcu_int;
+		volatile uint8_t mcu_done;
 	}			sc_mcu_wait[16];
 	uint8_t			sc_scan_seq_num;
 
@@ -840,6 +841,7 @@ mwx_init(struct ifnet *ifp)
 		MWX_DEV_LOG(sc, "init disable deep sleep returned %d\n", rv);
 	else
 		MWX_DEV_LOG(sc, "init deep sleep disabled\n");
+	delay(2000);
 
 	rv = mt7921_mcu_set_mac_enable(sc, 0, 1);
 	if (rv) {
@@ -3055,6 +3057,7 @@ mwx_mcu_send_mbuf(struct mwx_softc *sc, uint32_t cmd, struct mbuf *m, int *seqp)
 	if (seqp != NULL) {
 		memset(&sc->sc_mcu_wait[seq], 0, sizeof(sc->sc_mcu_wait[0]));
 		sc->sc_mcu_wait[seq].mcu_cmd = cmd;
+		sc->sc_mcu_wait[seq].mcu_done = 0;
 		*seqp = seq;
 	}
 	q = &sc->sc_txmcuq;
@@ -3237,11 +3240,56 @@ mwx_mcu_rx_event(struct mwx_softc *sc, struct mbuf *m)
 
 		sc->sc_mcu_wait[rxd_seq].mcu_int = mcu_int;
 		sc->sc_mcu_wait[rxd_seq].mcu_m = m;
+		sc->sc_mcu_wait[rxd_seq].mcu_done = 1;
 		wakeup(&sc->sc_mcu_wait[rxd_seq]);
 		return;
 	}
 
 	m_freem(m);
+}
+
+static int
+mwx_mcu_wait_completion(struct mwx_softc *sc, uint32_t cmd, int seq, uint32_t timeout_ms)
+{
+	uint32_t elapsed_us = 0;
+	uint32_t timeout_us = timeout_ms * 1000;
+
+	while (!sc->sc_mcu_wait[seq].mcu_done && elapsed_us < timeout_us) {
+		/*
+		 * Actively poll the device interrupt status and MCU RX queues.
+		 * On macOS, when executing within a gated action (such as WCL scan/join),
+		 * the workloop gate is held by this thread, preventing IOInterruptEventSource
+		 * from executing on the workloop. Directly servicing mwx_intr and draining
+		 * sc_rxmcuq / sc_rxfwdlq here reaps MCU event responses without deadlocking.
+		 */
+		mwx_intr(sc);
+		if (!sc->sc_mcu_wait[seq].mcu_done) {
+			mwx_dma_rx_done(sc, &sc->sc_rxmcuq);
+			mwx_dma_rx_done(sc, &sc->sc_rxfwdlq);
+		}
+		if (sc->sc_mcu_wait[seq].mcu_done)
+			break;
+
+		if (elapsed_us < 2000) {
+			/* Fast polling for the first 2ms (most MCU commands finish in < 200us) */
+			IODelay(50);
+			elapsed_us += 50;
+		} else if (elapsed_us < 50000) {
+			IODelay(500);
+			elapsed_us += 500;
+		} else {
+			IOSleep(2);
+			elapsed_us += 2000;
+		}
+	}
+
+	if (!sc->sc_mcu_wait[seq].mcu_done) {
+		IOLog("MTKWifi: %s: command 0x%08x seq=%d timeout after %u us\n",
+		    DEVNAME(sc), cmd, seq, elapsed_us);
+		mwx_reset(sc);
+		return ETIMEDOUT;
+	}
+	return 0;
 }
 
 int
@@ -3252,12 +3300,9 @@ mwx_mcu_wait_resp_int(struct mwx_softc *sc, uint32_t cmd, int seq,
 
 	KASSERT(seq < nitems(sc->sc_mcu_wait));
 
-	rv = tsleep_nsec(&sc->sc_mcu_wait[seq], 0, "mwxwait", SEC_TO_NSEC(3));
-	if (rv != 0) {
-		printf("%s: command %x timeout\n", DEVNAME(sc), cmd);
-		mwx_reset(sc);
+	rv = mwx_mcu_wait_completion(sc, cmd, seq, 3000);
+	if (rv != 0)
 		return rv;
-	}
 
 	if (sc->sc_mcu_wait[seq].mcu_m != NULL) {
 		m_freem(sc->sc_mcu_wait[seq].mcu_m);
@@ -3276,14 +3321,13 @@ mwx_mcu_wait_resp_msg(struct mwx_softc *sc, uint32_t cmd, int seq,
 
 	KASSERT(seq < nitems(sc->sc_mcu_wait));
 
-	rv = tsleep_nsec(&sc->sc_mcu_wait[seq], 0, "mwxwait", SEC_TO_NSEC(3));
-	if (rv != 0) {
-		printf("%s: command %x timeout\n", DEVNAME(sc), cmd);
-		mwx_reset(sc);
+	rv = mwx_mcu_wait_completion(sc, cmd, seq, 3000);
+	if (rv != 0)
 		return rv;
-	}
+
 	if (sc->sc_mcu_wait[seq].mcu_m == NULL) {
-		printf("%s: command response missing\n", DEVNAME(sc));
+		IOLog("MTKWifi: %s: command 0x%08x seq=%d response missing\n",
+		    DEVNAME(sc), cmd, seq);
 		return ENOENT;
 	}
 	if (mp != NULL)
