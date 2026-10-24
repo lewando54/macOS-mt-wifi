@@ -13,6 +13,7 @@
 */
 
 #include "ItlHalService.hpp"
+#include <kern/clock.h>
 
 #define super OSObject
 OSDefineMetaClassAndAbstractStructors(ItlHalService, OSObject)
@@ -61,6 +62,9 @@ void ItlHalService::
 wakeupOn(void *ident)
 {
 //    XYLog("%s\n", __FUNCTION__);
+    if (this->mainCommandGate) {
+        this->mainCommandGate->commandWakeup(ident);
+    }
     wakeup(ident);
 }
 
@@ -68,6 +72,28 @@ int ItlHalService::
 tsleep_nsec(void *ident, int priority, const char *wmesg, uint64_t timo)
 {
 //    XYLog("%s %s\n", __FUNCTION__, wmesg);
+    if (this->mainWorkLoop && this->mainWorkLoop->inGate() && this->mainCommandGate) {
+        if (timo == 0) {
+            int res = this->mainCommandGate->commandSleep(ident, THREAD_INTERRUPTIBLE);
+            if (res == THREAD_AWAKENED)
+                return 0;
+            else if (res == THREAD_TIMED_OUT)
+                return ETIMEDOUT;
+            else
+                return EINTR;
+        } else {
+            uint64_t abstime = 0, deadline = 0;
+            nanoseconds_to_absolutetime(timo, &abstime);
+            clock_absolutetime_interval_to_deadline(abstime, &deadline);
+            int res = this->mainCommandGate->commandSleep(ident, deadline, THREAD_INTERRUPTIBLE);
+            if (res == THREAD_AWAKENED)
+                return 0;
+            else if (res == THREAD_TIMED_OUT)
+                return ETIMEDOUT;
+            else
+                return EINTR;
+        }
+    }
     struct timespec ts;
     int err;
     memset(&ts, 0, sizeof(struct timespec));
